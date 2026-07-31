@@ -1,0 +1,39 @@
+info:
+  name: "ModpackHub"
+  identifier: "modpackhub"
+  description: "Install and manage Minecraft modpacks from Modrinth, CurseForge and direct URLs."
+
+  flags: "developerEscalateExportScript"
+  version: "0.1.0"
+
+  target: "beta-2026-06"
+  author: "Nyde"
+  icon: ""
+  website: "https://github.com/Nyde5/Modpack-Hub"
+
+admin:
+  view: "admin/view.blade.php"
+  controller: "admin/controller.php"
+  css: ""
+  wrapper: ""
+
+dashboard:
+  css: ""
+  wrapper: ""
+  components: "components"
+
+data:
+  directory: "private"
+  public: ""
+  console: "console"
+
+requests:
+  views: ""
+  app: "app"
+  routers:
+    application: ""
+    client: "routers/client.php"
+    web: ""
+
+database:
+  migrations: "database"

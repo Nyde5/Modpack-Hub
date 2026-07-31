@@ -1,0 +1,110 @@
+{
+  "meta": {
+    "version": "PTDL_v2",
+    "update_url": null
+  },
+  "name": "ModpackHub Installer (internal - do not assign manually)",
+  "author": "modpackhub@localhost",
+  "description": "Service egg used by ModpackHub to install modpacks. Do not create servers with this egg.",
+  "features": [],
+  "docker_images": {
+    "ModpackHub Installer": "ghcr.io/pterodactyl/installers:debian"
+  },
+  "file_denylist": [],
+  "startup": "echo 'ModpackHub: installation completed, waiting for the original egg to be restored.'",
+  "config": {
+    "files": "{}",
+    "startup": "{\"done\": \"__MODPACKHUB_NEVER_STARTS__\"}",
+    "logs": "{}",
+    "stop": "^C"
+  },
+  "scripts": {
+    "installation": {
+      "container": "ghcr.io/pterodactyl/installers:debian",
+      "entrypoint": "bash",
+      "script": "#!/bin/bash\n\nset -euo pipefail\n\nPACK_URL=\"${PACK_URL:-}\"\nPACK_FORMAT=\"${PACK_FORMAT:-zip}\"\nMC_VERSION=\"${MC_VERSION:-}\"\nLOADER=\"${LOADER:-none}\"\nLOADER_VERSION=\"${LOADER_VERSION:-}\"\nINSTALL_LOADER=\"${INSTALL_LOADER:-0}\"\nACCEPT_EULA=\"${ACCEPT_EULA:-0}\"\nCLEAN_MODS=\"${CLEAN_MODS:-1}\"\n\nSERVER_DIR=/mnt/server\nTMP=\"$SERVER_DIR/.modpackhub-tmp\"\nRESULT=\"$SERVER_DIR/.modpackhub-result\"\n\nFILES_LIST=\"$SERVER_DIR/.modpackhub-files\"\n\nmkdir -p \"$SERVER_DIR\"\nrm -f \"$RESULT\"\n\nRESULT_WRITTEN=0\nresult_fail() { RESULT_WRITTEN=1; printf 'fail: %s\\n' \"$*\" > \"$RESULT\" 2>/dev/null || true; }\n\non_exit() {\n  local code=$?\n  if [ \"$code\" -ne 0 ] && [ \"$RESULT_WRITTEN\" -eq 0 ]; then\n    result_fail \"the install script exited with code $code\"\n  fi\n  exit \"$code\"\n}\ntrap on_exit EXIT\n\nfail() { echo \"ModpackHub: $*\" >&2; result_fail \"$*\"; exit 1; }\n\nneed() {\n  command -v \"$1\" >/dev/null 2>&1 && return 0\n  if command -v apt-get >/dev/null 2>&1; then\n    echo \"ModpackHub: installing '$2' in the install container...\"\n    apt-get update -qq >/dev/null 2>&1 || true\n    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \"$2\" >/dev/null 2>&1 || true\n  fi\n  command -v \"$1\" >/dev/null 2>&1 || fail \"the install image does not have '$1' and I could not install it\"\n}\n\nCF_HOSTS=\"edge.forgecdn.net mediafilez.forgecdn.net cdn.modrinth.com\"\n\nMR_HOSTS=\"cdn.modrinth.com github.com raw.githubusercontent.com gitlab.com objects.githubusercontent.com\"\n\nCURL_SAFE=(--proto '=https' --proto-redir '=https' --max-redirs 3 -fSL --retry 3 --retry-delay 2)\n\nurl_allowed() {\n  local url=\"$1\" allow=\"$2\" rest host a\n  case \"$url\" in https://*) rest=\"${url#https://}\" ;; *) return 1 ;; esac\n  rest=\"${rest%%/*}\"; rest=\"${rest%%\\?*}\"; rest=\"${rest%%#*}\"\n  case \"$rest\" in *@*) return 1 ;; esac\n  case \"$rest\" in\n    *:443) host=\"${rest%:443}\" ;;\n    *:*)   return 1 ;;\n    *)     host=\"$rest\" ;;\n  esac\n  host=\"$(printf '%s' \"$host\" | tr 'A-Z' 'a-z')\"\n  for a in $allow; do\n    if [ \"$host\" = \"$a\" ]; then return 0; fi\n  done\n  return 1\n}\n\nclean_mods() {\n  if [ \"$CLEAN_MODS\" != 1 ]; then\n    echo \"ModpackHub: keeping the mods already installed (replace existing mods was turned off).\"\n    return 0\n  fi\n  [ -d \"$SERVER_DIR/mods\" ] || return 0\n  echo \"ModpackHub: removing the mods of the previous pack...\"\n  find \"$SERVER_DIR/mods\" -mindepth 1 -maxdepth 1 -exec rm -rf {} +\n}\n\n[ -n \"$PACK_URL\" ] || fail \"PACK_URL missing\"\ncase \"$PACK_URL\" in https://*) ;; *) fail \"PACK_URL must be https\" ;; esac\n\nneed curl curl\nneed unzip unzip\n\nif [ \"$PACK_FORMAT\" = mrpack ] || [ \"$PACK_FORMAT\" = cfpack ]; then need jq jq; fi\n\nrm -rf \"$TMP\"\nmkdir -p \"$TMP\"\n\necho \"ModpackHub: downloading the pack ($PACK_FORMAT)...\"\ncurl \"${CURL_SAFE[@]}\" -o \"$TMP/pack.bin\" \"$PACK_URL\" || fail \"pack download failed\"\n\nZIP_LIST=\"\"\nread_zip_list() {\n  ZIP_LIST=\"$(unzip -Z1 \"$1\")\" || fail \"unreadable archive (not a zip?)\"\n  if grep -Eq '^/|(^|/)\\.\\.(/|$)' <<< \"$ZIP_LIST\"; then\n    fail \"archive with path traversal: rejected\"\n  fi\n}\n\ncase \"$PACK_FORMAT\" in\n  zip)\n    read_zip_list \"$TMP/pack.bin\"\n    clean_mods\n    unzip -qo \"$TMP/pack.bin\" -d \"$SERVER_DIR\"\n\n    TOP=\"$(sed 's#/.*##' <<< \"$ZIP_LIST\" | sort -u | sed '/^$/d')\"\n    if [ \"$(wc -l <<< \"$TOP\")\" -eq 1 ] && [ -d \"$SERVER_DIR/$TOP\" ] && [ \"$TOP\" != \".\" ]; then\n      echo \"ModpackHub: flattening folder '$TOP'\"\n      shopt -s dotglob\n      mv \"$SERVER_DIR/$TOP\"/* \"$SERVER_DIR\"/\n      shopt -u dotglob\n      rmdir \"$SERVER_DIR/$TOP\"\n    fi\n    ;;\n\n  mrpack)\n    read_zip_list \"$TMP/pack.bin\"\n    unzip -qo \"$TMP/pack.bin\" -d \"$TMP/mrpack\"\n    INDEX=\"$TMP/mrpack/modrinth.index.json\"\n    [ -f \"$INDEX\" ] || fail \"mrpack without modrinth.index.json\"\n\n    if [ -z \"$LOADER_VERSION\" ] || [ \"$LOADER\" = none ]; then\n      for dep in forge neoforge fabric-loader quilt-loader; do\n        found=\"$(jq -r --arg k \"$dep\" '.dependencies[$k] // empty' \"$INDEX\")\"\n        [ -n \"$found\" ] || continue\n        LOADER_VERSION=\"$found\"\n        LOADER=\"${dep%-loader}\"\n        break\n      done\n    fi\n    [ -n \"$MC_VERSION\" ] || MC_VERSION=\"$(jq -r '.dependencies.minecraft // empty' \"$INDEX\")\"\n    echo \"ModpackHub: mrpack for MC ${MC_VERSION:-?} loader ${LOADER}${LOADER_VERSION:+ $LOADER_VERSION}\"\n\n    clean_mods\n\n    while IFS=$'\\t' read -r path url; do\n      [ -n \"$path\" ] || continue\n      case \"$path\" in /*|*..*) fail \"mrpack: unsafe path ($path)\" ;; esac\n      [ -n \"$url\" ] || fail \"mrpack: no download for $path\"\n\n      url_allowed \"$url\" \"$MR_HOSTS\" || fail \"mrpack: download from a host that is not allowed ($path)\"\n      mkdir -p \"$SERVER_DIR/$(dirname \"$path\")\"\n      curl \"${CURL_SAFE[@]}\" -o \"$SERVER_DIR/$path\" \"$url\" || fail \"download failed: $path\"\n    done < <(jq -r '.files[] | select((.env.server // \"required\") != \"unsupported\") | [.path, .downloads[0]] | @tsv' \"$INDEX\")\n\n    for dir in overrides server-overrides; do\n      [ -d \"$TMP/mrpack/$dir\" ] || continue\n      echo \"ModpackHub: copying $dir/\"\n      cp -a \"$TMP/mrpack/$dir/.\" \"$SERVER_DIR/\"\n    done\n    ;;\n\n  cfpack)\n\n    read_zip_list \"$TMP/pack.bin\"\n    unzip -qo \"$TMP/pack.bin\" -d \"$TMP/cfpack\"\n    MANIFEST=\"$TMP/cfpack/manifest.json\"\n    [ -f \"$MANIFEST\" ] || fail \"curseforge pack without manifest.json\"\n\n    [ -f \"$FILES_LIST\" ] || fail \"the mod list from the panel is missing: the installation cannot continue\"\n\n    [ -n \"$MC_VERSION\" ] || MC_VERSION=\"$(jq -r '.minecraft.version // empty' \"$MANIFEST\")\"\n    ML=\"$(jq -r '.minecraft.modLoaders[]? | select(.primary != false) | .id // empty' \"$MANIFEST\" | head -1)\"\n    case \"$ML\" in\n      fabric-*)   ML_NAME=fabric;   ML_VER=\"${ML#fabric-}\" ;;\n      neoforge-*) ML_NAME=neoforge; ML_VER=\"${ML#neoforge-}\" ;;\n      forge-*)    ML_NAME=forge;    ML_VER=\"${ML#forge-}\" ;;\n      quilt-*)    ML_NAME=quilt;    ML_VER=\"${ML#quilt-}\" ;;\n      *)          ML_NAME=\"\"; ML_VER=\"\" ;;\n    esac\n    if [ \"$LOADER\" = none ] && [ -n \"$ML_NAME\" ]; then LOADER=\"$ML_NAME\"; fi\n    if [ -z \"$LOADER_VERSION\" ]; then LOADER_VERSION=\"$ML_VER\"; fi\n    echo \"ModpackHub: curseforge pack for MC ${MC_VERSION:-?} loader ${LOADER}${LOADER_VERSION:+ $LOADER_VERSION}\"\n\n    if [ \"$INSTALL_LOADER\" != 1 ] && [ -n \"$ML_NAME\" ]; then\n      echo \"ModpackHub: WARNING - this pack does not bundle the $ML_NAME loader and 'install the mod loader' was off:\" >&2\n      echo \"ModpackHub: the mods will be installed but the server will need the loader to start.\" >&2\n    fi\n\n    clean_mods\n    mkdir -p \"$SERVER_DIR/mods\"\n\n    COUNT=0\n    while IFS=$'\\t' read -r path url; do\n      [ -n \"$path\" ] || continue\n      case \"$path\" in /*|*..*) fail \"unsafe path in the mod list ($path)\" ;; esac\n      [ -n \"$url\" ] || fail \"no download url for $path\"\n      url_allowed \"$url\" \"$CF_HOSTS\" || fail \"mod download from a host that is not allowed: $path\"\n      mkdir -p \"$SERVER_DIR/$(dirname \"$path\")\"\n      curl \"${CURL_SAFE[@]}\" -o \"$SERVER_DIR/$path\" \"$url\" || fail \"download failed: $path\"\n      COUNT=$((COUNT + 1))\n    done < \"$FILES_LIST\"\n    [ \"$COUNT\" -gt 0 ] || fail \"the mod list from the panel was empty\"\n    echo \"ModpackHub: $COUNT mods downloaded\"\n\n    if [ -d \"$TMP/cfpack/overrides\" ]; then\n      echo \"ModpackHub: merging overrides/ into the server root\"\n      cp -a \"$TMP/cfpack/overrides/.\" \"$SERVER_DIR/\"\n    fi\n    ;;\n\n  *)\n    fail \"PACK_FORMAT '$PACK_FORMAT' not supported (zip|mrpack|cfpack)\"\n    ;;\nesac\n\nif [ \"$INSTALL_LOADER\" = 1 ] && [ \"$LOADER\" != none ]; then\n  need java default-jre-headless\n  [ -n \"$LOADER_VERSION\" ] || fail \"INSTALL_LOADER=1 but LOADER_VERSION is empty\"\n\n  case \"$LOADER\" in\n    forge)    LOADER_JAR=\"https://maven.minecraftforge.net/net/minecraftforge/forge/${MC_VERSION}-${LOADER_VERSION}/forge-${MC_VERSION}-${LOADER_VERSION}-installer.jar\" ;;\n    neoforge) LOADER_JAR=\"https://maven.neoforged.net/releases/net/neoforged/neoforge/${LOADER_VERSION}/neoforge-${LOADER_VERSION}-installer.jar\" ;;\n    fabric)   LOADER_JAR=\"https://meta.fabricmc.net/v2/versions/loader/${MC_VERSION}/${LOADER_VERSION}/1.0.1/server/jar\" ;;\n    *)        fail \"automatic installer not available for loader '$LOADER'\" ;;\n  esac\n\n  echo \"ModpackHub: installing $LOADER $LOADER_VERSION...\"\n  curl \"${CURL_SAFE[@]}\" -o \"$TMP/loader.jar\" \"$LOADER_JAR\" || fail \"download of the $LOADER installer failed\"\n\n  if [ \"$LOADER\" = fabric ]; then\n    mv \"$TMP/loader.jar\" \"$SERVER_DIR/server.jar\"\n  else\n    (cd \"$SERVER_DIR\" && java -jar \"$TMP/loader.jar\" --installServer) || fail \"$LOADER installer failed\"\n  fi\nfi\n\nif [ \"$ACCEPT_EULA\" = 1 ]; then\n  echo \"eula=true\" > \"$SERVER_DIR/eula.txt\"\nelse\n  echo \"ModpackHub: EULA not accepted, eula.txt not written.\"\nfi\n\nrm -rf \"$TMP\"\n\nrm -f \"$FILES_LIST\"\n\nRESULT_WRITTEN=1\nprintf 'ok\\n' > \"$RESULT\"\necho \"ModpackHub: installation completed.\"\n"
+    }
+  },
+  "variables": [
+    {
+      "name": "Pack URL",
+      "description": "Direct URL of the pack (resolved by the panel)",
+      "env_variable": "PACK_URL",
+      "default_value": "",
+      "user_viewable": false,
+      "user_editable": false,
+      "rules": "required|string|max:2048",
+      "field_type": "text"
+    },
+    {
+      "name": "Pack format",
+      "description": "zip | mrpack | cfpack (cfpack = CurseForge manifest pack: the mods are listed, not bundled)",
+      "env_variable": "PACK_FORMAT",
+      "default_value": "zip",
+      "user_viewable": false,
+      "user_editable": false,
+      "rules": "required|in:zip,mrpack,cfpack",
+      "field_type": "text"
+    },
+    {
+      "name": "MC version",
+      "description": "",
+      "env_variable": "MC_VERSION",
+      "default_value": "",
+      "user_viewable": false,
+      "user_editable": false,
+      "rules": "nullable|string|max:32",
+      "field_type": "text"
+    },
+    {
+      "name": "Loader",
+      "description": "forge|neoforge|fabric|quilt|none",
+      "env_variable": "LOADER",
+      "default_value": "none",
+      "user_viewable": false,
+      "user_editable": false,
+      "rules": "required|string|max:16",
+      "field_type": "text"
+    },
+    {
+      "name": "Loader version",
+      "description": "",
+      "env_variable": "LOADER_VERSION",
+      "default_value": "",
+      "user_viewable": false,
+      "user_editable": false,
+      "rules": "nullable|string|max:64",
+      "field_type": "text"
+    },
+    {
+      "name": "Install loader",
+      "description": "1 = run the loader installer on the node",
+      "env_variable": "INSTALL_LOADER",
+      "default_value": "0",
+      "user_viewable": false,
+      "user_editable": false,
+      "rules": "required|in:0,1",
+      "field_type": "text"
+    },
+    {
+      "name": "Accept EULA",
+      "description": "1 = write eula.txt (consent collected in the UI)",
+      "env_variable": "ACCEPT_EULA",
+      "default_value": "0",
+      "user_viewable": false,
+      "user_editable": false,
+      "rules": "required|in:0,1",
+      "field_type": "text"
+    },
+    {
+      "name": "Replace existing mods",
+      "description": "1 = empty mods/ before installing (and only mods/). Chosen by the user in the install modal.",
+      "env_variable": "CLEAN_MODS",
+      "default_value": "1",
+      "user_viewable": false,
+      "user_editable": false,
+      "rules": "required|in:0,1",
+      "field_type": "text"
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+- Signature: "cleanup"
+  Description: "Close ModpackHub installations left hanging by a killed worker and restore the original egg."
+  Path: "CleanupInstalls.php"
+  Interval: "everyThirtyMinutes"
