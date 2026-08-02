@@ -3,7 +3,7 @@ info:
   identifier: "modpackhub"
   description: "Install and manage Minecraft modpacks from Modrinth, CurseForge and direct URLs."
 
-  flags: "developerEscalateExportScript"
+  flags: ""
   version: "0.1.0"
 
   target: "beta-2026-06"

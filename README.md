@@ -1,52 +1,122 @@
-# ModpackHub
+<h1 align="center">ModpackHub</h1>
 
-A Blueprint extension for Pterodactyl that adds a **Modpacks** tab to every server, so your users
-can install a Minecraft modpack themselves — search it, pick a version, click install — instead of
-uploading files over SFTP or opening a ticket.
+<p align="center">
+  <b>Install Minecraft modpacks from Modrinth, CurseForge and direct URLs — from the panel.</b>
+</p>
 
-Packs come from **Modrinth**, **CurseForge** or a **direct URL**.
+<p align="center">
+  <i>
+    <a href="https://github.com/BlueprintFramework/framework">Blueprint</a> ·
+    <a href="https://github.com/pterodactyl/panel">Pterodactyl</a> ·
+    <a href="https://github.com/Nyde5/Modpack-Hub/releases/latest">Latest release</a>
+  </i>
+</p>
 
-## Install
+<p align="center">
+  <a href="https://github.com/Nyde5/Modpack-Hub/releases/latest"><img alt="Version" src="https://img.shields.io/badge/version-0.1.0-3b82f6?style=flat-square"></a>
+  <img alt="License" src="https://img.shields.io/badge/license-GPLv3-3b82f6?style=flat-square">
+  <img alt="Pterodactyl" src="https://img.shields.io/badge/Pterodactyl-1.11.x-3b82f6?style=flat-square">
+  <img alt="Blueprint" src="https://img.shields.io/badge/Blueprint-beta--2026--06-3b82f6?style=flat-square">
+</p>
 
-Download `modpackhub.blueprint` from the [latest release](https://github.com/Nyde5/Modpack-Hub/releases/latest),
-put it on the panel and install it:
+ModpackHub is a Blueprint extension that adds a **Modpacks** tab to every server. Your users search
+for a pack, pick a version and click install — no SFTP upload, no ticket. The pack is downloaded and
+extracted **on the Wings node**, not by the panel, and the server goes back to its own egg when the
+installation is over.
+
+## Features
+
+- **Three sources:** Modrinth, CurseForge and any direct HTTPS link to a pack.
+- **A backup is taken first**, unless the user turns it off. It is a normal panel backup, restored
+  from the server's own **Backups** tab.
+- **The dialog says what will happen before it happens:** for CurseForge packs, how many mods will
+  be installed, which ones are client-only, and which ones the authors don't allow to be downloaded.
+- **Loader installers run on the node.** Forge, NeoForge and Fabric are installed where they are
+  needed, so the panel never has to touch a jar.
+- **Only `mods/` is replaced** — and only if the user leaves that option on. Worlds, `eula.txt`,
+  configs and player data stay where they are.
+- **Live progress**, one status card, and **no automatic restart**: the server is started when the
+  user wants.
+- **A crashed worker can't lock a server.** A scheduled command closes installations left hanging
+  and restores the original egg on its own.
+
+## Requirements
+
+| | |
+|---|---|
+| Panel | Pterodactyl 1.11.x with [Blueprint](https://blueprint.zip) — built against `beta-2026-06` |
+| PHP | 8.2+ |
+| Node | a running Wings node |
+| Panel services | the queue worker and the cron (`* * * * * php artisan schedule:run`) Pterodactyl already needs |
+| CurseForge | optional: a free API key from [console.curseforge.com](https://console.curseforge.com). Without it that source is simply hidden and everything else works |
+
+## Installation
+
+1. Download `modpackhub.blueprint` from the [latest release](https://github.com/Nyde5/Modpack-Hub/releases/latest).
+2. Put it in your Pterodactyl folder (usually `/var/www/pterodactyl`).
+3. Install it:
 
 ```bash
 cd /var/www/pterodactyl
 blueprint -install modpackhub.blueprint
 ```
 
-Then open **Admin → Extensions → ModpackHub** and click **Import installer egg** — once, before the
-first installation.
+4. Open **Admin → Extensions → ModpackHub** and click **Import installer egg**. This is done once,
+   before the first installation.
 
-## For the person installing a modpack
+## Configuration
 
-- **Search and install from the panel.** Type the name of a pack, pick a version, accept the EULA,
-  start. Progress is shown live on the page.
-- **A backup is taken first**, unless you turn it off. It is a normal panel backup: if you don't
-  like the result, restore it from the server's own **Backups** tab.
-- **You are told what will happen before it happens.** For CurseForge packs the dialog says how many
-  mods will be installed and which ones — if any — the authors don't allow to be downloaded, so you
-  can decide before anything on the server is touched.
-- **Your world stays.** Installing a new pack replaces the contents of the `mods` folder (and only
-  that, and only if you leave the option on). Worlds, `eula.txt`, configs and player data are not
-  touched.
-- **Nothing restarts by itself.** The new pack is in place; you start the server when you want.
+Everything lives in **Admin → Extensions → ModpackHub**:
 
-## For the admin
+- **API key** — the CurseForge key. It is checked against the API before being saved, and it never
+  reaches the browser: the field is always empty, empty means "keep the saved key", and there is a
+  dedicated checkbox to remove it.
+- **Enabled sources** — turn Modrinth, CurseForge or direct URLs on and off.
+- **Max pack size (MB)** — the size limit for direct-URL packs.
+- **Installer egg** — the import button and its status.
 
-**Requirements:** a Pterodactyl panel with Blueprint and a running Wings node. For the CurseForge
-source, a free API key from [console.curseforge.com](https://console.curseforge.com) — without it
-that source is simply hidden, everything else works.
+> [!NOTE]
+> The installer egg lives in its own **ModpackHub** nest and is switched onto a server only for the
+> duration of an installation. Don't assign it to a server by hand.
 
-In **Admin → Extensions → ModpackHub** you set the API key, choose which sources are enabled, and
-set a maximum size for direct-URL packs. The **installer egg** has to be imported from that page
-before the first installation; it lives in its own "ModpackHub" nest and should never be assigned
-to a server by hand.
+## Updating
 
-Installations use the panel's queue, and the panel's scheduler (`* * * * * php artisan
-schedule:run`, the cron Pterodactyl already needs) also closes installations left hanging by a
-crashed worker, so a failed install can never block a server for good.
+Download the new release and install it the same way — Blueprint updates the extension in place,
+and your settings and installation history are kept:
+
+```bash
+blueprint -install modpackhub.blueprint
+```
+
+## Uninstalling
+
+```bash
+blueprint -remove modpackhub
+```
+
+Three things stay behind **on purpose**, and can be removed by hand if you want them gone:
+
+- the `modpackhub_installations` table and its rows — Blueprint never reverts migrations, and those
+  rows hold the original egg of any installation still in flight;
+- the installer egg and its nest — removing an egg while a server is temporarily switched to it
+  would strand that server;
+- the extension settings, including the CurseForge key, so a reinstall doesn't start from scratch.
+
+## How it works
+
+The panel doesn't download the pack. The server is temporarily switched to a service egg that
+fetches and extracts the modpack on the Wings node — this is also where the loader installers run —
+and the original egg, startup command and variables are restored afterwards, including when
+something fails halfway.
+
+Installations run in the panel's queue as a state machine on the database, so progress survives a
+panel restart, and the same scheduler that Pterodactyl already runs closes the ones whose worker
+died.
+
+On the security side: direct URLs are validated before anything is fetched (HTTPS only, no private
+address ranges, redirects re-checked at every hop), archives are inspected before being extracted,
+every URL a pack carries inside itself has to belong to a known CDN, and the CurseForge API key
+never leaves the panel.
 
 ## Good to know
 
@@ -54,20 +124,18 @@ crashed worker, so a failed install can never block a server for good.
   of a pack and skips mods that only make sense on a client, but a pack designed to make your game
   look nicer has little to give a server.
 - **Some mods cannot be downloaded automatically.** On CurseForge an author can forbid it. Those
-  mods are looked up on Modrinth, and taken from there only when it is the exact same file; what is
-  left is listed by name, and you choose whether to install without it or fetch the pack by hand.
+  mods are looked up on Modrinth and taken from there only when it is byte-for-byte the same file;
+  what is left is listed by name, and the user chooses whether to install without it.
+- **CurseForge packs in manifest format don't ship a loader or a server jar** — leave "install the
+  mod loader" on, as the dialog suggests, or the server will have mods and nothing to run them with.
 - **One installation at a time per server**, and never while a backup is being restored.
 
-## Under the hood
+## Roadmap
 
-The pack is not downloaded by the panel. The server is temporarily switched to a service egg that
-downloads and extracts on the Wings node — loader installers for Forge, NeoForge and Fabric run
-there too — and the original egg is restored afterwards, including when something fails halfway.
+**v0.2.0 — mod manager:** listing, adding, removing and toggling single mods, plus uploading a jar
+from your own computer, for the mods an API can't hand over.
 
-URLs are validated before anything is fetched, archives are inspected before being extracted, and
-the CurseForge API key never leaves the panel.
-
-## Build from source
+## Building from source
 
 ```bash
 cd /var/www/pterodactyl
